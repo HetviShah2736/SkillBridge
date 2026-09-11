@@ -31,6 +31,7 @@ JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()}
 JWT_ALG = "HS256"
 JWT_EXPIRES_HOURS = 24 * 7
 
@@ -69,6 +70,7 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     created_at: str
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -154,7 +156,42 @@ async def get_current_user(cred: Optional[HTTPAuthorizationCredentials] = Depend
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    user["is_admin"] = user["email"].lower() in ADMIN_EMAILS
     return user
+
+
+async def get_current_user_optional(cred: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    if not cred:
+        return None
+    try:
+        payload = jwt.decode(cred.credentials, JWT_SECRET, algorithms=[JWT_ALG])
+        user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0, "password_hash": 0})
+        if user:
+            user["is_admin"] = user["email"].lower() in ADMIN_EMAILS
+        return user
+    except Exception:
+        return None
+
+
+async def require_admin(user=Depends(get_current_user)):
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def log_event(event_type: str, user: Optional[dict] = None, meta: Optional[dict] = None):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": event_type,
+        "user_id": user.get("id") if user else None,
+        "user_email": user.get("email") if user else None,
+        "created_at": now_iso(),
+        "meta": meta or {},
+    }
+    try:
+        await db.events.insert_one(doc)
+    except Exception as e:
+        logger.error(f"log_event failed: {e}")
 
 
 # ============ LLM Helper ============
@@ -320,9 +357,11 @@ async def register(input: RegisterInput):
     }
     await db.users.insert_one(user_doc)
     token = create_token(user_id)
+    is_admin = user_doc["email"] in ADMIN_EMAILS
+    await log_event("signup", {"id": user_id, "email": user_doc["email"]})
     return AuthResponse(
         token=token,
-        user=UserOut(id=user_id, email=user_doc["email"], full_name=user_doc["full_name"], created_at=user_doc["created_at"]),
+        user=UserOut(id=user_id, email=user_doc["email"], full_name=user_doc["full_name"], created_at=user_doc["created_at"], is_admin=is_admin),
     )
 
 
@@ -332,9 +371,11 @@ async def login(input: LoginInput):
     if not user or not verify_password(input.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_token(user["id"])
+    is_admin = user["email"] in ADMIN_EMAILS
+    await log_event("login", {"id": user["id"], "email": user["email"]})
     return AuthResponse(
         token=token,
-        user=UserOut(id=user["id"], email=user["email"], full_name=user["full_name"], created_at=user["created_at"]),
+        user=UserOut(id=user["id"], email=user["email"], full_name=user["full_name"], created_at=user["created_at"], is_admin=is_admin),
     )
 
 
@@ -743,6 +784,215 @@ async def email_week(analysis_id: str, body: EmailWeekRequest, user=Depends(get_
     except Exception as e:
         logger.error(f"Email send failed: {e}")
         raise HTTPException(status_code=502, detail=f"Email send failed: {str(e)}")
+
+
+
+
+# ============ Analytics: Event Tracking ============
+class PageviewInput(BaseModel):
+    path: str
+    session_id: Optional[str] = None
+    referrer: Optional[str] = ""
+    utm_source: Optional[str] = ""
+    utm_medium: Optional[str] = ""
+    utm_campaign: Optional[str] = ""
+    title: Optional[str] = ""
+
+
+@api.post("/events/pageview")
+async def track_pageview(input: PageviewInput, user: Optional[dict] = Depends(get_current_user_optional)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": "pageview",
+        "user_id": user.get("id") if user else None,
+        "user_email": user.get("email") if user else None,
+        "created_at": now_iso(),
+        "path": input.path[:200],
+        "title": (input.title or "")[:200],
+        "session_id": (input.session_id or "")[:80],
+        "referrer": (input.referrer or "")[:400],
+        "utm_source": (input.utm_source or "")[:80],
+        "utm_medium": (input.utm_medium or "")[:80],
+        "utm_campaign": (input.utm_campaign or "")[:80],
+    }
+    try:
+        await db.events.insert_one(doc)
+    except Exception as e:
+        logger.error(f"pageview insert failed: {e}")
+    return {"ok": True}
+
+
+# ============ Admin Analytics ============
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _classify_source(ev: dict) -> str:
+    if ev.get("utm_source"):
+        return f"utm:{ev['utm_source']}"
+    ref = (ev.get("referrer") or "").lower()
+    if not ref:
+        return "direct"
+    for domain, label in [
+        ("google.", "google"), ("bing.", "bing"), ("duckduckgo.", "duckduckgo"),
+        ("facebook.", "facebook"), ("twitter.", "twitter"), ("x.com", "twitter"),
+        ("linkedin.", "linkedin"), ("reddit.", "reddit"), ("youtube.", "youtube"),
+        ("instagram.", "instagram"), ("github.", "github"),
+    ]:
+        if domain in ref:
+            return label
+    # fallback: bare domain
+    try:
+        host = ref.split("//", 1)[-1].split("/", 1)[0]
+        return f"ref:{host}" if host else "direct"
+    except Exception:
+        return "direct"
+
+
+@api.get("/admin/overview")
+async def admin_overview(_admin=Depends(require_admin)):
+    total_users = await db.users.count_documents({})
+    d1 = _iso_days_ago(1)
+    d7 = _iso_days_ago(7)
+    d30 = _iso_days_ago(30)
+
+    async def active_users(since_iso):
+        # distinct authenticated users with any event in window
+        vals = await db.events.distinct("user_id", {"user_id": {"$ne": None}, "created_at": {"$gte": since_iso}})
+        return len(vals)
+
+    dau = await active_users(d1)
+    wau = await active_users(d7)
+    mau = await active_users(d30)
+
+    signups_24h = await db.events.count_documents({"type": "signup", "created_at": {"$gte": d1}})
+    signups_7d = await db.events.count_documents({"type": "signup", "created_at": {"$gte": d7}})
+    logins_24h = await db.events.count_documents({"type": "login", "created_at": {"$gte": d1}})
+    logins_7d = await db.events.count_documents({"type": "login", "created_at": {"$gte": d7}})
+    pageviews_24h = await db.events.count_documents({"type": "pageview", "created_at": {"$gte": d1}})
+    pageviews_7d = await db.events.count_documents({"type": "pageview", "created_at": {"$gte": d7}})
+
+    # unique visitors by session_id in 24h
+    unique_24h = await db.events.distinct("session_id", {"type": "pageview", "session_id": {"$ne": ""}, "created_at": {"$gte": d1}})
+
+    return {
+        "total_users": total_users,
+        "dau": dau, "wau": wau, "mau": mau,
+        "signups_24h": signups_24h, "signups_7d": signups_7d,
+        "logins_24h": logins_24h, "logins_7d": logins_7d,
+        "pageviews_24h": pageviews_24h, "pageviews_7d": pageviews_7d,
+        "unique_visitors_24h": len(unique_24h),
+    }
+
+
+@api.get("/admin/timeseries")
+async def admin_timeseries(days: int = 14, _admin=Depends(require_admin)):
+    days = max(1, min(90, days))
+    since = _iso_days_ago(days)
+    cursor = db.events.find(
+        {"created_at": {"$gte": since}},
+        {"_id": 0, "type": 1, "created_at": 1, "user_id": 1, "session_id": 1},
+    )
+    buckets = {}
+    async for ev in cursor:
+        try:
+            day = ev["created_at"][:10]
+        except Exception:
+            continue
+        b = buckets.setdefault(day, {"signups": 0, "logins": 0, "pageviews": 0, "sessions": set(), "users": set()})
+        t = ev.get("type")
+        if t == "signup":
+            b["signups"] += 1
+        elif t == "login":
+            b["logins"] += 1
+        elif t == "pageview":
+            b["pageviews"] += 1
+            if ev.get("session_id"):
+                b["sessions"].add(ev["session_id"])
+        if ev.get("user_id"):
+            b["users"].add(ev["user_id"])
+
+    series = []
+    for i in range(days - 1, -1, -1):
+        day = (datetime.now(timezone.utc) - timedelta(days=i)).date().isoformat()
+        b = buckets.get(day, {"signups": 0, "logins": 0, "pageviews": 0, "sessions": set(), "users": set()})
+        series.append({
+            "date": day,
+            "signups": b["signups"],
+            "logins": b["logins"],
+            "pageviews": b["pageviews"],
+            "sessions": len(b["sessions"]),
+            "active_users": len(b["users"]),
+        })
+    return series
+
+
+@api.get("/admin/top-pages")
+async def admin_top_pages(days: int = 30, _admin=Depends(require_admin)):
+    since = _iso_days_ago(min(90, max(1, days)))
+    pipeline = [
+        {"$match": {"type": "pageview", "created_at": {"$gte": since}}},
+        {"$group": {"_id": "$path", "views": {"$sum": 1}, "sessions": {"$addToSet": "$session_id"}}},
+        {"$project": {"_id": 0, "path": "$_id", "views": 1, "unique_sessions": {"$size": "$sessions"}}},
+        {"$sort": {"views": -1}},
+        {"$limit": 20},
+    ]
+    return await db.events.aggregate(pipeline).to_list(20)
+
+
+@api.get("/admin/traffic-sources")
+async def admin_traffic_sources(days: int = 30, _admin=Depends(require_admin)):
+    since = _iso_days_ago(min(90, max(1, days)))
+    cursor = db.events.find(
+        {"type": "pageview", "created_at": {"$gte": since}},
+        {"_id": 0, "referrer": 1, "utm_source": 1, "session_id": 1},
+    )
+    counts = {}
+    sessions_per_source = {}
+    async for ev in cursor:
+        src = _classify_source(ev)
+        counts[src] = counts.get(src, 0) + 1
+        sess = ev.get("session_id")
+        if sess:
+            sessions_per_source.setdefault(src, set()).add(sess)
+    rows = [
+        {"source": s, "views": counts[s], "unique_sessions": len(sessions_per_source.get(s, set()))}
+        for s in counts
+    ]
+    rows.sort(key=lambda r: r["views"], reverse=True)
+    return rows[:20]
+
+
+@api.get("/admin/recent-activity")
+async def admin_recent_activity(limit: int = 50, _admin=Depends(require_admin)):
+    limit = max(1, min(200, limit))
+    docs = await db.events.find(
+        {}, {"_id": 0},
+    ).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+@api.get("/admin/users")
+async def admin_users(_admin=Depends(require_admin)):
+    users = await db.users.find(
+        {}, {"_id": 0, "password_hash": 0, "profile": 0},
+    ).sort("created_at", -1).to_list(500)
+    # Enrich with last activity
+    user_ids = [u["id"] for u in users]
+    last_map = {}
+    if user_ids:
+        cursor = db.events.aggregate([
+            {"$match": {"user_id": {"$in": user_ids}}},
+            {"$group": {"_id": "$user_id", "last_at": {"$max": "$created_at"}, "event_count": {"$sum": 1}}},
+        ])
+        async for row in cursor:
+            last_map[row["_id"]] = {"last_active": row["last_at"], "event_count": row["event_count"]}
+    for u in users:
+        info = last_map.get(u["id"], {})
+        u["last_active"] = info.get("last_active")
+        u["event_count"] = info.get("event_count", 0)
+        u["is_admin"] = u["email"].lower() in ADMIN_EMAILS
+    return users
 
 
 

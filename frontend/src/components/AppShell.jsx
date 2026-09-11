@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutDashboard, Target, Map, LogOut, Zap } from "lucide-react";
+import { LayoutDashboard, Target, Map, LogOut, Zap, Shield } from "lucide-react";
 
 export default function AppShell({ children }) {
   const { user, logout } = useAuth();
@@ -12,6 +12,10 @@ export default function AppShell({ children }) {
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, id: "nav-dashboard" },
     { to: "/wizard", label: "New Analysis", icon: Target, id: "nav-wizard" },
   ];
+
+  if (user?.is_admin) {
+    nav.push({ to: "/admin", label: "Admin Analytics", icon: Shield, id: "nav-admin" });
+  }
 
   return (
     <div className="min-h-screen flex bg-[#0B0F17]">
