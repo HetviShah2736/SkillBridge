@@ -1,0 +1,71 @@
+{
+  "design_identity": {
+    "archetype": "The Precision Tactical Command Center",
+    "theme": "Dark Mode Default with Light Mode Toggle Support",
+    "tone": "Empowering, Data-Dense, High-Precision, Futuristic yet Accessible",
+    "target_audience": "Software Engineers, Product Managers, Data Scientists, Designers & Tech Professionals seeking targeted career progression"
+  },
+  "typography": {
+    "font_family_heading": "Outfit, sans-serif",
+    "font_family_body": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_family_mono": "JetBrains Mono, Source Code Pro, monospace",
+    "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight",
+    "h2": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight",
+    "h3": "text-xl sm:text-2xl font-medium tracking-normal",
+    "h4": "text-lg sm:text-xl font-medium",
+    "body": "text-base leading-relaxed text-slate-300 dark:text-slate-300",
+    "subtext": "text-sm text-slate-400 dark:text-slate-400",
+    "overline": "text-xs font-semibold uppercase tracking-[0.2em] text-indigo-400"
+  },
+  "colors": {
+    "background_dark": "#0B0F17",
+    "surface_dark": "#111827",
+    "surface_card_dark": "#1F2937",
+    "border_dark": "#374151",
+    "background_light": "#F8FAFC",
+    "surface_light": "#FFFFFF",
+    "surface_card_light": "#F1F5F9",
+    "border_light": "#E2E8F0",
+    "primary": "#6366F1",
+    "primary_hover": "#4F46E5",
+    "accent_cyan": "#06B6D4",
+    "status_strong": "#10B981",
+    "status_strong_bg": "rgba(16, 185, 129, 0.15)",
+    "status_partial": "#F59E0B",
+    "status_partial_bg": "rgba(245, 158, 11, 0.15)",
+    "status_gap": "#EF4444",
+    "status_gap_bg": "rgba(239, 68, 68, 0.15)"
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-slate-900/80 border border-slate-800 shadow-2xl",
+    "glow_border": "border border-indigo-500/30 shadow-[0_0_20px_rgba(99,102,241,0.15)]",
+    "card_hover": "transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-500/10",
+    "bucket_strong_card": "border-l-4 border-l-emerald-500 bg-slate-900/60 dark:bg-slate-900/60",
+    "bucket_partial_card": "border-l-4 border-l-amber-500 bg-slate-900/60 dark:bg-slate-900/60",
+    "bucket_gap_card": "border-l-4 border-l-rose-500 bg-slate-900/60 dark:bg-slate-900/60"
+  },
+  "key_features_and_layouts": {
+    "auth_flow": "Split-screen modern layout. Left: Ambient glowing animated career target nodes. Right: Glassmorphic form with email/password login, register, and quick test persona presets.",
+    "wizard_flow": "4-Step Interactive Skill Engine Wizard: 1. Target Role Selection (Curated roles + custom title input), 2. Experience & Resume Extractor (Textarea paste with instant live token count & extract button), 3. Skill Radar & Extraction Verification (Editable tags grouped by category), 4. Gap Analysis Calculation Trigger.",
+    "dashboard_overview": "Top: High level Readiness Score Gauge (e.g. 74% Match), Stats cards (Strong Count, Partial Count, Gap Count, Est. Upskill Weeks). Middle: Radar Chart comparing Current vs Target Role Skill Requirements + 3 Categorized Buckets (Strong, Partial, Gap). Bottom: Weekly Roadmap & Milestone Progression Tracker.",
+    "roadmap_tracker": "Chronological milestone timeline. Each week card features resource links (Articles, Courses, Projects), checkbox completion toggles, skill tags, and practical action items.",
+    "progress_dashboard": "Interactive skill verification checklist, skill proficiency updater, overall readiness score updates in real-time as tasks are marked completed."
+  },
+  "image_urls": {
+    "hero_workspace": "https://images.unsplash.com/photo-1542744173-05336fcc7ad4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHw0fHx0ZWNoJTIwY2FyZWVyJTIwcHJvZmVzc2lvbmFsJTIwd29ya2luZyUyMHNvZnR3YXJlJTIwZW5naW5lZXIlMjBncmFwaHxlbnwwfHx8fDE3ODkxMjM5MjF8MA&ixlib=rb-4.1.0&q=85",
+    "avatar_engineer": "https://images.unsplash.com/photo-1536148935331-408321065b18?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHxfHx0ZWNoJTIwY2FyZWVyJTIwcHJvZmVzc2lvbmFsJTIwd29ya2luZyUyMHNvZnR3YXJlJTIwZW5naW5lZXIlMjBncmFwaHxlbnwwfHx8fDE3ODkxMjM5MjF8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Build a robust, full-featured Skill Gap Engine matching all problem statement requirements: Auth, Profile Setup with Resume Paste, Target Role Selection, AI Skill Extraction, Gap Analysis Engine (Strong/Partial/Gap buckets), Results Visualization (Recharts Radar + Progress charts), Personalized Roadmap with milestones & curated resources, and Progress Dashboard with completion tracking.",
+    "Ensure all interactive components and key content items include explicit `data-testid` attributes.",
+    "Provide pre-loaded demo personas (e.g. Frontend Engineer -> Senior Fullstack Architect, Data Analyst -> Machine Learning Engineer) for 1-click testing.",
+    "Use standard Recharts components (ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, PieChart) for data visualizations.",
+    "Use Sonner for toasts, Lucide React icons for tactical UI indicators, and Shadcn UI primitives for modal/dialogs/tabs/selects/tooltips.",
+    "Never rely on transparent backgrounds for dropdowns, tooltips, or floating headers. Always apply background surfaces and blurs."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "test_id_requirement": "All interactive elements MUST include data-testid attributes (e.g., data-testid=\"login-submit-button\", data-testid=\"resume-text-input\", data-testid=\"skill-bucket-strong\").",
+    "theme_execution": "Default to slate/indigo dark theme with toggle option for light mode.",
+    "animation": "Framer motion for smooth step wizard transitions, radar chart animations, and roadmap completion micro-interactions."
+  }
+}

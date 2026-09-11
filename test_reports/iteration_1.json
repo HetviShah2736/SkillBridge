@@ -1,0 +1,32 @@
+{
+  "summary": "SkillBridge Gap Engine tested end-to-end. All backend endpoints (auth, roles, skills extraction via Gemini, analysis for curated + custom roles, roadmap generation & toggle, dashboard) work correctly. Full frontend wizard flow (auth demo -> dashboard -> 4-step wizard -> results with radar+buckets -> roadmap -> task toggle updates progress) works end-to-end. Note: login/register return token under key 'token' (not 'access_token') and analysis payload requires numeric proficiency (0-100).",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login test1@sb.dev/test1234 -> 200 with JWT token",
+    "GET /api/auth/me with bearer token -> 200 returns user profile",
+    "POST /api/auth/register duplicate -> 400 'Email already registered'",
+    "POST /api/auth/login wrong password -> 401 'Invalid email or password'",
+    "GET /api/roles/curated -> 8 roles including all expected titles with skills lists",
+    "POST /api/skills/extract -> Gemini 3 Flash returned 9+ skills with name/category/proficiency",
+    "POST /api/analysis/run curated Fullstack Engineer -> readiness=32, 10 required, strong/gap populated, id persisted",
+    "POST /api/analysis/run is_custom=true 'Blockchain Solidity Engineer' -> Gemini generated 10 required skills",
+    "GET /api/analysis/latest, /api/analysis/list, /api/analysis/{id} -> all return persisted data",
+    "POST /api/roadmap/generate/{id} -> 6 weeks each with tasks/resources/milestone (~30s)",
+    "PATCH /api/roadmap/{id}/toggle with body {week_index, task_index, completed} -> updates roadmap",
+    "GET /api/dashboard -> {latest_analysis, total_analyses, completed_tasks, total_tasks, progress_pct} correct after toggle",
+    "Frontend AuthPage: auth-demo-btn creates account and redirects to /dashboard",
+    "Frontend Dashboard: empty-state + new-analysis-btn visible; click routes to /wizard",
+    "Frontend Wizard: role-fullstack-engineer -> resume-textarea -> extract-skills-btn -> skills-list appears -> run-analysis-btn -> /results/:id",
+    "Frontend Results: results-readiness-score='52%', bucket-strong/partial/gap all render, generate-roadmap-btn navigates to /roadmap/:id",
+    "Frontend Roadmap: task-0-0 toggle changes roadmap-progress from 0% -> 6% (1/18)"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": [
+    "Login/register response uses key 'token' (not 'access_token') — matches frontend api.js interceptor.",
+    "SkillOut model requires proficiency as int (0-100). Extraction returns ints; if any client sends strings it will 422."
+  ]
+}
