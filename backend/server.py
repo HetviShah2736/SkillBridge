@@ -6,10 +6,14 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, Literal
 
+import asyncio
+import io
+
 import bcrypt
 import jwt
+import resend
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -25,8 +29,13 @@ MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 JWT_ALG = "HS256"
 JWT_EXPIRES_HOURS = 24 * 7
+
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -617,6 +626,124 @@ async def dashboard(user=Depends(get_current_user)):
         "total_tasks": total_tasks,
         "progress_pct": progress_pct,
     }
+
+
+# ============ Resume Upload ============
+def _pdf_text(data: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join((p.extract_text() or "") for p in reader.pages)
+
+
+def _docx_text(data: bytes) -> str:
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+
+@api.post("/resume/upload")
+async def upload_resume(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("pdf", "docx", "txt"):
+        raise HTTPException(status_code=400, detail="Only PDF, DOCX or TXT files are supported")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+    try:
+        if ext == "pdf":
+            text = _pdf_text(data)
+        elif ext == "docx":
+            text = _docx_text(data)
+        else:
+            text = data.decode("utf-8", errors="ignore")
+    except Exception as e:
+        logger.error(f"Resume parse failed: {e}")
+        raise HTTPException(status_code=400, detail="Could not parse the file")
+    text = (text or "").strip()
+    if len(text) < 30:
+        raise HTTPException(status_code=400, detail="Not enough text found in the file")
+    return {"text": text, "chars": len(text), "filename": file.filename}
+
+
+# ============ Email Weekly Nudge ============
+class EmailWeekRequest(BaseModel):
+    week_index: int = 0
+
+
+def build_week_email_html(user_name: str, role_title: str, week: dict) -> str:
+    tasks_rows = "".join(
+        f"""<tr><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">
+        <div style="font-weight:600;color:#0f172a;">{t.get('title','')}</div>
+        <div style="font-size:13px;color:#475569;margin-top:2px;">{t.get('description','')}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;font-family:monospace;">~{t.get('hours',2)}h</div>
+        </td></tr>"""
+        for t in week.get("tasks", [])
+    )
+    res_rows = "".join(
+        f"""<tr><td style="padding:8px 14px;">
+        <a href="{r.get('url','#')}" style="color:#4f46e5;text-decoration:none;font-weight:500;">{r.get('title','Resource')}</a>
+        <span style="color:#94a3b8;font-size:11px;margin-left:6px;text-transform:uppercase;">{r.get('type','')}</span>
+        </td></tr>"""
+        for r in week.get("resources", [])
+    )
+    skills = ", ".join(week.get("skills", [])) or "—"
+    return f"""
+    <div style="font-family:Inter,Arial,sans-serif;background:#f8fafc;padding:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+        <tr>
+          <td style="background:linear-gradient(90deg,#4f46e5,#06b6d4);padding:24px 28px;color:#fff;">
+            <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;opacity:.85;">SkillBridge · Weekly Nudge</div>
+            <div style="font-size:22px;font-weight:700;margin-top:6px;">Week {week.get('week', 1)} — {week.get('theme','This Week')}</div>
+            <div style="font-size:13px;opacity:.9;margin-top:4px;">Target: {role_title}</div>
+          </td>
+        </tr>
+        <tr><td style="padding:20px 28px;color:#0f172a;">
+          <p style="margin:0 0 8px 0;">Hi {user_name},</p>
+          <p style="margin:0 0 16px 0;color:#475569;">Here's your focus for the week. Small consistent steps → real progress.</p>
+          <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;">Skills</div>
+          <div style="color:#334155;margin-bottom:16px;">{skills}</div>
+          <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;">Milestone</div>
+          <div style="color:#334155;margin-bottom:20px;">{week.get('milestone','')}</div>
+          <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;">Tasks</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;">
+            {tasks_rows}
+          </table>
+          <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin:20px 0 6px;">Resources</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;">
+            {res_rows}
+          </table>
+        </td></tr>
+        <tr><td style="padding:16px 28px;background:#f8fafc;font-size:12px;color:#94a3b8;text-align:center;">
+          Sent by SkillBridge · Bridge the gap.
+        </td></tr>
+      </table>
+    </div>
+    """
+
+
+@api.post("/roadmap/{analysis_id}/email-week")
+async def email_week(analysis_id: str, body: EmailWeekRequest, user=Depends(get_current_user)):
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="Email service not configured. Add RESEND_API_KEY to backend .env to enable email.")
+    analysis = await db.analyses.find_one({"id": analysis_id, "user_id": user["id"]})
+    if not analysis or not analysis.get("roadmap"):
+        raise HTTPException(status_code=404, detail="Roadmap not found")
+    weeks = analysis["roadmap"]["weeks"]
+    if body.week_index < 0 or body.week_index >= len(weeks):
+        raise HTTPException(status_code=400, detail="Invalid week index")
+    week = weeks[body.week_index]
+    html = build_week_email_html(user["full_name"], analysis["role_title"], week)
+    subject = f"Week {week.get('week', body.week_index + 1)}: {week.get('theme', 'Your SkillBridge nudge')}"
+    params = {"from": SENDER_EMAIL, "to": [user["email"]], "subject": subject, "html": html}
+    try:
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        return {"status": "sent", "email_id": result.get("id"), "to": user["email"]}
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Email send failed: {str(e)}")
+
 
 
 app.include_router(api)

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import { ArrowLeft, CheckCircle2, Circle, ExternalLink, BookOpen, PlayCircle, FileText, Wrench, Calendar } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Circle, ExternalLink, BookOpen, PlayCircle, FileText, Wrench, Calendar, Printer, Mail, Loader2 } from "lucide-react";
 
 const typeIcon = (t) => {
   const key = (t || "").toLowerCase();
@@ -16,6 +16,7 @@ export default function Roadmap() {
   const { analysisId } = useParams();
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [emailingIdx, setEmailingIdx] = useState(null);
 
   const load = () => {
     api.get(`/analysis/${analysisId}`)
@@ -25,6 +26,22 @@ export default function Roadmap() {
   };
 
   useEffect(() => { load(); }, [analysisId]);
+
+  const emailWeek = async (wi) => {
+    setEmailingIdx(wi);
+    try {
+      const { data } = await api.post(`/roadmap/${analysisId}/email-week`, { week_index: wi });
+      toast.success(`Email sent to ${data.to}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Email failed");
+    } finally {
+      setEmailingIdx(null);
+    }
+  };
+
+  const printRoadmap = () => {
+    window.print();
+  };
 
   const toggleTask = async (wi, ti, current) => {
     // Optimistic
@@ -61,10 +78,21 @@ export default function Roadmap() {
   const pct = totalTasks ? Math.round((completed / totalTasks) * 100) : 0;
 
   return (
-    <div className="p-6 md:p-10 max-w-6xl mx-auto">
-      <Link data-testid="back-to-results" to={`/results/${analysisId}`} className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 mb-4">
-        <ArrowLeft className="w-4 h-4" /> Back to Results
-      </Link>
+    <div className="p-6 md:p-10 max-w-6xl mx-auto print-root">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4 no-print">
+        <Link data-testid="back-to-results" to={`/results/${analysisId}`} className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200">
+          <ArrowLeft className="w-4 h-4" /> Back to Results
+        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            data-testid="print-roadmap-btn"
+            onClick={printRoadmap}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 hover:border-indigo-500/50 text-slate-300 hover:text-white text-sm transition-all"
+          >
+            <Printer className="w-4 h-4" /> Print / Save PDF
+          </button>
+        </div>
+      </div>
 
       <div className="mb-8">
         <div className="text-xs uppercase tracking-[0.25em] text-indigo-400 font-mono mb-2">// Personalized Roadmap</div>
@@ -114,6 +142,15 @@ export default function Roadmap() {
                     <div className="w-24 h-1.5 bg-slate-800 rounded-full mt-1.5 overflow-hidden">
                       <div className="h-full bg-emerald-500" style={{ width: `${weekPct}%` }} />
                     </div>
+                    <button
+                      data-testid={`email-week-${wi}`}
+                      onClick={() => emailWeek(wi)}
+                      disabled={emailingIdx === wi}
+                      className="mt-2 no-print inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md border border-slate-700 hover:border-cyan-500/50 hover:text-cyan-300 text-slate-400 transition-all disabled:opacity-60"
+                    >
+                      {emailingIdx === wi ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                      Email me this week
+                    </button>
                   </div>
                 </div>
 

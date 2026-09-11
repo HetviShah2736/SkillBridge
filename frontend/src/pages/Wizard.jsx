@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import { ArrowLeft, ArrowRight, Sparkles, Plus, X, Loader2, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Sparkles, Plus, X, Loader2, Check, Upload, FileText, ShieldAlert } from "lucide-react";
 
 const steps = [
   { key: "role", label: "Target Role" },
@@ -40,6 +40,10 @@ export default function Wizard() {
   const [newSkill, setNewSkill] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [inputMode, setInputMode] = useState("paste"); // paste | upload
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -63,6 +67,34 @@ export default function Wizard() {
       toast.error(e?.response?.data?.detail || "Extraction failed");
     } finally {
       setExtracting(false);
+    }
+  };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    const okExt = /\.(pdf|docx|txt)$/i.test(file.name);
+    if (!okExt) {
+      toast.error("Please upload a PDF, DOCX, or TXT file");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File too large (max 5MB)");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/resume/upload", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setResume(data.text);
+      setUploadedFile({ name: data.filename, chars: data.chars });
+      toast.success(`Parsed ${data.chars.toLocaleString()} characters from ${data.filename}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Upload failed");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -197,26 +229,85 @@ export default function Wizard() {
         {step === 1 && (
           <div>
             <h2 className="text-xl font-semibold text-slate-100 mb-2" style={{ fontFamily: "Outfit" }}>Tell us about your experience</h2>
-            <p className="text-slate-400 text-sm mb-6">Paste your resume, LinkedIn summary, or a short career overview.</p>
+            <p className="text-slate-400 text-sm mb-4">Upload your resume or paste your experience summary.</p>
 
-            <div className="mb-4 flex flex-wrap gap-2">
-              {DEMO_RESUMES.map((d, i) => (
-                <button
-                  key={i}
-                  data-testid={`demo-persona-${i}`}
-                  onClick={() => applyDemo(d)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-slate-700 hover:border-indigo-500/60 hover:text-indigo-300 text-slate-400 transition-all"
-                >
-                  <Sparkles className="w-3 h-3 inline mr-1" /> {d.label}
-                </button>
-              ))}
+            <div data-testid="honesty-banner" className="mb-5 flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <div className="text-amber-200 font-medium">Be honest with your skills</div>
+                <div className="text-slate-300/80 mt-0.5">Enter your <span className="font-semibold text-amber-200">actual</span> skills and proficiency — not the resume-buzzword version. The gap analysis is only as useful as it is truthful.</div>
+              </div>
             </div>
+
+            <div className="mb-4 flex items-center gap-2 border-b border-slate-800">
+              <button
+                data-testid="input-mode-paste"
+                onClick={() => setInputMode("paste")}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-all ${inputMode === "paste" ? "border-indigo-500 text-indigo-300" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+              >
+                Paste text
+              </button>
+              <button
+                data-testid="input-mode-upload"
+                onClick={() => setInputMode("upload")}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-all ${inputMode === "upload" ? "border-indigo-500 text-indigo-300" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+              >
+                Upload file
+              </button>
+              <div className="ml-auto flex flex-wrap gap-2">
+                {DEMO_RESUMES.map((d, i) => (
+                  <button
+                    key={i}
+                    data-testid={`demo-persona-${i}`}
+                    onClick={() => { applyDemo(d); setInputMode("paste"); }}
+                    className="text-xs px-3 py-1.5 rounded-full border border-slate-700 hover:border-indigo-500/60 hover:text-indigo-300 text-slate-400 transition-all"
+                  >
+                    <Sparkles className="w-3 h-3 inline mr-1" /> {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {inputMode === "upload" && (
+              <div
+                data-testid="upload-dropzone"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) handleFile(f);
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className="mb-4 rounded-xl border-2 border-dashed border-slate-700 hover:border-indigo-500/60 bg-slate-900/40 p-8 text-center cursor-pointer transition-all"
+              >
+                <input
+                  ref={fileInputRef}
+                  data-testid="resume-file-input"
+                  type="file"
+                  accept=".pdf,.docx,.txt"
+                  className="hidden"
+                  onChange={(e) => handleFile(e.target.files?.[0])}
+                />
+                <div className="mx-auto w-12 h-12 rounded-full bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center mb-3">
+                  {uploading ? <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /> : <Upload className="w-5 h-5 text-indigo-400" />}
+                </div>
+                <div className="text-slate-200 font-medium">
+                  {uploading ? "Parsing your resume..." : "Drop your resume or click to browse"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1 font-mono">PDF · DOCX · TXT · max 5 MB</div>
+                {uploadedFile && !uploading && (
+                  <div data-testid="uploaded-file-info" className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+                    <FileText className="w-3 h-3" /> {uploadedFile.name} · {uploadedFile.chars.toLocaleString()} chars parsed
+                  </div>
+                )}
+              </div>
+            )}
 
             <textarea
               data-testid="resume-textarea"
               value={resume}
               onChange={(e) => setResume(e.target.value)}
-              rows={12}
+              rows={inputMode === "upload" ? 6 : 12}
               placeholder="e.g. I'm a Frontend Developer with 3 years of experience building React apps using TypeScript, Redux, and Tailwind..."
               className="w-full px-4 py-3 bg-slate-900/60 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-indigo-500 resize-none font-mono text-sm leading-relaxed"
             />
@@ -230,7 +321,14 @@ export default function Wizard() {
         {step === 2 && (
           <div>
             <h2 className="text-xl font-semibold text-slate-100 mb-2" style={{ fontFamily: "Outfit" }}>Verify your skills</h2>
-            <p className="text-slate-400 text-sm mb-6">Adjust proficiency (0–100), remove wrong ones, or add missing skills.</p>
+            <p className="text-slate-400 text-sm mb-4">Adjust proficiency (0–100), remove wrong ones, or add missing skills.</p>
+
+            <div className="mb-5 flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-slate-300/90">
+                Set proficiency <span className="font-semibold text-amber-200">honestly</span>. 30 = touched it, 60 = can ship with help, 85+ = interview-level.
+              </div>
+            </div>
 
             <div data-testid="skills-list" className="space-y-3 mb-6 max-h-[420px] overflow-y-auto pr-2">
               {skills.map((s, idx) => (
